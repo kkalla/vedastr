@@ -23,13 +23,13 @@ num_class = len(character) + 1
 num_steps = batch_max_length + 1
 
 deploy = dict(
-    gpu_id='3',
+    gpu_id='0,1,2,3',
     transform=[
-        dict(type='Sensitive', sensitive=sensitive),
-        dict(type='ColorToGray'),
+        dict(type='Sensitive', sensitive=sensitive, need_character=character),
+        dict(type='ToGray'),
         dict(type='Resize', size=size),
-        dict(type='ToTensor'),
         dict(type='Normalize', mean=mean, std=std),
+        dict(type='ToTensor'),
     ],
     converter=dict(
         type='AttnConverter',
@@ -86,8 +86,8 @@ deploy = dict(
                             attention=dict(
                                 type='MultiHeadAttention',
                                 in_channels=hidden_dim,
-                                k_channels=hidden_dim,
-                                v_channels=hidden_dim,
+                                k_channels=hidden_dim // n_head,
+                                v_channels=hidden_dim // n_head,
                                 n_head=n_head,
                                 dropout=dropout,
                             ),
@@ -128,8 +128,8 @@ deploy = dict(
                     self_attention=dict(
                         type='MultiHeadAttention',
                         in_channels=hidden_dim,
-                        k_channels=hidden_dim,
-                        v_channels=hidden_dim,
+                        k_channels=hidden_dim // n_head,
+                        v_channels=hidden_dim // n_head,
                         n_head=n_head,
                         dropout=dropout,
                     ),
@@ -137,8 +137,8 @@ deploy = dict(
                     attention=dict(
                         type='MultiHeadAttention',
                         in_channels=hidden_dim,
-                        k_channels=hidden_dim,
-                        v_channels=hidden_dim,
+                        k_channels=hidden_dim // n_head,
+                        v_channels=hidden_dim // n_head,
                         n_head=n_head,
                         dropout=dropout,
                     ),
@@ -186,20 +186,24 @@ common = dict(
             dict(type='FileHandler', level='INFO'),
         ),
     ),
-    cudnn_deterministic=False,
+    cudnn_deterministic=True,
     cudnn_benchmark=True,
     metric=dict(type='Accuracy'),
 )
 
 ###############################################################################
-data_filter_off = False
 dataset_params = dict(
     batch_max_length=batch_max_length,
-    data_filter_off=data_filter_off,
+    data_filter=True,
     character=character,
 )
+test_dataset_params = dict(
+    batch_max_length=batch_max_length,
+    data_filter=False,
+    character=test_character,
+)
 
-data_root = './data/data_lmdb_release/'
+data_root = '../../../../dataset/str/data/data_lmdb_release/'
 
 ###############################################################################
 # 3. test
@@ -211,7 +215,7 @@ test_root = data_root + 'evaluation/'
 test_folder_names = ['CUTE80', 'IC03_867', 'IC13_1015', 'IC15_2077',
                      'IIIT5k_3000', 'SVT', 'SVTP']
 test_dataset = [dict(type='LmdbDataset', root=test_root + f_name,
-                     **dataset_params) for f_name in test_folder_names]
+                     **test_dataset_params) for f_name in test_folder_names]
 
 test = dict(
     data=dict(
@@ -221,16 +225,13 @@ test = dict(
             num_workers=4,
             shuffle=False,
         ),
-        dataset=dict(
-            type='ConcatDatasets',
-            datasets=test_dataset,
-        ),
+        dataset=test_dataset,
         transform=[
-            dict(type='Sensitive', sensitive=test_sensitive),
-            dict(type='ColorToGray'),
+            dict(type='Sensitive', sensitive=test_sensitive, need_character=test_character),
+            dict(type='ToGray'),
             dict(type='Resize', size=size),
-            dict(type='ToTensor'),
             dict(type='Normalize', mean=mean, std=std),
+            dict(type='ToTensor'),
         ],
     ),
     postprocess_cfg=dict(
@@ -243,9 +244,6 @@ test = dict(
 # 4. train
 
 root_workdir = 'workdir'  # save directory
-
-fill = 0
-mode = 'nearest'
 
 # data
 train_root = data_root + 'training/'
@@ -261,20 +259,19 @@ train_dataset_st = [dict(type='LmdbDataset', root=train_root_st)]
 
 # valid
 valid_root = data_root + 'validation/'
-valid_dataset = dict(type='LmdbDataset', root=valid_root, **dataset_params)
+valid_dataset = dict(type='LmdbDataset', root=valid_root, **test_dataset_params)
 
 train_transforms = [
-    dict(type='Sensitive', sensitive=sensitive),
-    dict(type='ColorToGray'),
-    dict(type='RandomNormalRotation', mean=0, std=34, expand=True,
-         center=None, fill=fill, mode=mode, p=0.5),
+    dict(type='Sensitive', sensitive=sensitive, need_character=character),
+    dict(type='ToGray'),
+    dict(type='ExpandRotate', limit=34, p=0.5),
     dict(type='Resize', size=size),
-    dict(type='ToTensor'),
     dict(type='Normalize', mean=mean, std=std),
+    dict(type='ToTensor'),
 ]
 
 max_epochs = 6
-milestones = [2, 4]
+milestones = [2, 4]  # epoch start from 0, so 2 means lr decay at 3 epoch, 4 means lr decay at the end of
 
 train = dict(
     data=dict(
@@ -311,19 +308,17 @@ train = dict(
             dataloader=dict(
                 type='DataLoader',
                 batch_size=batch_size,
-                num_workers=0,
+                num_workers=4,
                 shuffle=False,
             ),
             dataset=valid_dataset,
-            transform=deploy['transform'],
+            transform=test['data']['transform'],
         ),
     ),
-    optimizer=dict(type='Adam', lr=1e-4),
+    optimizer=dict(type='Adam', lr=3e-4),
     criterion=dict(type='CrossEntropyLoss', ignore_index=num_class),
-    lr_scheduler=dict(type='StepLR',
-                      iter_based=False,
-                      milestones=milestones,
-                      gamma=0.1,
+    lr_scheduler=dict(type='CosineLR',
+                      iter_based=True,
                       warmup_epochs=0.1,
                       ),
     max_epochs=max_epochs,

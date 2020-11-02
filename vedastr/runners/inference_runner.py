@@ -9,13 +9,13 @@ from ..models import build_model
 from ..utils import load_checkpoint
 
 
-class DeployRunner(Common):
+class InferenceRunner(Common):
     def __init__(self, deploy_cfg, common_cfg=None):
         deploy_cfg = deploy_cfg.copy()
         common_cfg = {} if common_cfg is None else common_cfg.copy()
 
         common_cfg['gpu_id'] = deploy_cfg.pop('gpu_id')
-        super(DeployRunner, self).__init__(common_cfg)
+        super(InferenceRunner, self).__init__(common_cfg)
 
         # build test transform
         self.transform = self._build_transform(deploy_cfg['transform'])
@@ -23,7 +23,7 @@ class DeployRunner(Common):
         self.converter = self._build_converter(deploy_cfg['converter'])
         # build model
         self.model = self._build_model(deploy_cfg['model'])
-        self.postprocess_cfg = deploy_cfg.get('postprocess_cfg', None)
+        self.postprocess_cfg = deploy_cfg.get('postprocess', None)
         self.model.eval()
 
     def _build_model(self, cfg):
@@ -72,9 +72,9 @@ class DeployRunner(Common):
             else:
                 prob = max_probs[i, :str_len].cumprod(dim=0)[-1]
             preds_prob.append(prob)
-
             if not sensitive:
                 pstr = pstr.lower()
+
             if character:
                 pstr = re.sub('[^{}]'.format(character), '', pstr)
 
@@ -85,7 +85,8 @@ class DeployRunner(Common):
     def __call__(self, image):
         with torch.no_grad():
             dummy_text = ''
-            image, text = self.transform(image, dummy_text)
+            aug = self.transform(image=image, label=dummy_text)
+            image, text = aug['image'], aug['label']
             image = image.unsqueeze(0)
             label_input, label_length, label_target = self.converter.test_encode([text])
             if self.use_gpu:

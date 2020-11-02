@@ -4,16 +4,16 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../'))
 
-from PIL import Image
+import cv2
 
-from vedastr.runners import DeployRunner
+from vedastr.runners import InferenceRunner
 from vedastr.utils import Config
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Inference')
-    parser.add_argument('config', type=str, help='config file path')
-    parser.add_argument('checkpoint', type=str, help='checkpoint file path')
+    parser.add_argument('config', type=str, help='Config file path')
+    parser.add_argument('checkpoint', type=str, help='Checkpoint file path')
     parser.add_argument('image', type=str, help='input image path')
     args = parser.parse_args()
 
@@ -29,7 +29,7 @@ def main():
     deploy_cfg = cfg['deploy']
     common_cfg = cfg.get('common')
 
-    runner = DeployRunner(deploy_cfg, common_cfg)
+    runner = InferenceRunner(deploy_cfg, common_cfg)
     runner.load_checkpoint(args.checkpoint)
     if os.path.isfile(args.image):
         images = [args.image]
@@ -37,7 +37,8 @@ def main():
         images = [os.path.join(args.image, name)
                   for name in os.listdir(args.image)]
     for img in images:
-        image = Image.open(img)
+        image = cv2.imread(img)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pred_str, probs = runner(image)
         runner.logger.info('predict string: {} \t of {}'.format(pred_str, img))
 

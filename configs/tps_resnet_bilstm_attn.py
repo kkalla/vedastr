@@ -14,13 +14,13 @@ num_class = len(character) + 2
 num_steps = batch_max_length + 1
 
 deploy = dict(
-    gpu_id='3',
+    gpu_id='0',
     transform=[
-        dict(type='Sensitive', sensitive=sensitive),
-        dict(type='ColorToGray'),
+        dict(type='Sensitive', sensitive=sensitive, need_character=character),
+        dict(type='ToGray'),
         dict(type='Resize', size=size),
-        dict(type='ToTensor'),
         dict(type='Normalize', mean=mean, std=std),
+        dict(type='ToTensor'),
     ],
     converter=dict(
         type='AttnConverter',
@@ -191,14 +191,19 @@ common = dict(
     metric=dict(type='Accuracy'),
 )
 ###############################################################################
-data_filter_off = False
 dataset_params = dict(
     batch_max_length=batch_max_length,
-    data_filter_off=data_filter_off,
+    data_filter=True,
     character=character,
 )
 
-data_root = './data/data_lmdb_release/'
+test_dataset_params = dict(
+    batch_max_length=batch_max_length,
+    data_filter=False,
+    character=character,
+)
+
+data_root = '../../../../dataset/str/data/data_lmdb_release/'
 
 ###############################################################################
 # 3. test
@@ -206,10 +211,11 @@ batch_size = 192
 
 # data
 test_root = data_root + 'evaluation/'
-test_folder_names = ['CUTE80', 'IC03_867', 'IC13_1015', 'IC15_2077',
-                     'IIIT5k_3000', 'SVT', 'SVTP']
+test_folder_names = ['IC15_2077']
+# test_folder_names = ['CUTE80', 'IC03_867', 'IC13_1015', 'IC15_2077',
+#                      'IIIT5k_3000', 'SVT', 'SVTP']
 test_dataset = [dict(type='LmdbDataset', root=test_root + f_name,
-                     **dataset_params) for f_name in test_folder_names]
+                     **test_dataset_params) for f_name in test_folder_names]
 
 test = dict(
     data=dict(
@@ -219,10 +225,7 @@ test = dict(
             num_workers=4,
             shuffle=False,
         ),
-        dataset=dict(
-            type='ConcatDatasets',
-            datasets=test_dataset,
-        ),
+        dataset=test_dataset,
         transform=deploy['transform'],
     ),
     postprocess_cfg=dict(
@@ -236,7 +239,6 @@ test = dict(
 
 # work directory
 root_workdir = 'workdir'
-
 
 # data
 train_root = data_root + 'training/'
@@ -256,11 +258,11 @@ valid_dataset = dict(type='LmdbDataset', root=valid_root, **dataset_params)
 
 # train transforms
 train_transforms = [
-    dict(type='Sensitive', sensitive=sensitive),
-    dict(type='ColorToGray'),
+    dict(type='Sensitive', sensitive=sensitive, need_character=character),
+    dict(type='ToGray'),
     dict(type='Resize', size=size),
-    dict(type='ToTensor'),
     dict(type='Normalize', mean=mean, std=std),
+    dict(type='ToTensor'),
 ]
 
 max_iterations = 300000

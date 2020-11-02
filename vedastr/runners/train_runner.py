@@ -2,20 +2,29 @@ import os.path as osp
 from collections import OrderedDict
 
 import torch
+import torch.utils.data as tud
 
-from .deploy_runner import DeployRunner
+from .inference_runner import InferenceRunner
 from ..criteria import build_criterion
 from ..lr_schedulers import build_lr_scheduler
 from ..optimizers import build_optimizer
 from ..utils import save_checkpoint
 
 
-class TrainRunner(DeployRunner):
+class TrainRunner(InferenceRunner):
     def __init__(self, train_cfg, deploy_cfg, common_cfg=None):
         super(TrainRunner, self).__init__(deploy_cfg, common_cfg)
 
         self.train_dataloader = self._build_dataloader(
             train_cfg['data']['train'])
+        assert isinstance(self.train_dataloader, tud.DataLoader), \
+            "Only suppor single dataloader in training phase. " \
+            "Check the type of dataset please. " \
+            "If the type of dataset is list, then the type of build datalodaer will be dict." \
+            "If the type of dataset is torch.utils.data.Dataset, " \
+            "the type of build dataloader will be torch.utils.data.Dataloader. " \
+            "If you wanna combine different dataset, consider using ConcatDataset in your config file please."
+
         if 'val' in train_cfg['data']:
             self.val_dataloader = self._build_dataloader(
                 train_cfg['data']['val'])
@@ -34,14 +43,7 @@ class TrainRunner(DeployRunner):
         self.optimizer = self._build_optimizer(train_cfg['optimizer'])
         self.criterion = self._build_criterion(train_cfg['criterion'])
         self.lr_scheduler = self._build_lr_scheduler(train_cfg['lr_scheduler'])
-        self.max_iterations = train_cfg.get('max_iterations', False)
-        self.max_epochs = train_cfg.get('max_epochs', False)
-        assert self.max_epochs ^ self.max_iterations, \
-            'max_epochs and max_iterations are mutual exclusion'
-        if not self.max_iterations:
-            self.max_iterations = len(self.train_dataloader) * self.max_epochs
-        if not self.max_epochs:
-            self.max_epochs = self.max_iterations // len(self.train_dataloader)
+
         self.log_interval = train_cfg.get('log_interval', 10)
         self.trainval_ratio = train_cfg.get('trainval_ratio', -1)
         self.snapshot_interval = train_cfg.get('snapshot_interval', -1)
@@ -52,8 +54,6 @@ class TrainRunner(DeployRunner):
 
         assert self.workdir is not None
         assert self.log_interval > 0
-
-        self.best = OrderedDict()
 
         if train_cfg.get('resume'):
             self.resume(**train_cfg['resume'])
@@ -134,17 +134,14 @@ class TrainRunner(DeployRunner):
             else:
                 pred = self.model((img,))
 
-            pred, prob = self.postprocess(pred)
+            pred, prob = self.postprocess(pred, self.postprocess_cfg)
             self.metric.measure(pred, prob, label)
 
     def __call__(self):
         self.metric.reset()
         self.logger.info('Start train...')
         iter_based = self.lr_scheduler._iter_based
-        if hasattr(self.lr_scheduler, 'warmup_iters'):
-            warmup_iters = self.lr_scheduler.warmup_iters
-        else:
-            warmup_iters = 0
+        warmup_iters = self.lr_scheduler.warmup_iters
         flag = True
         while flag:
             for img, label in self.train_dataloader:
@@ -161,11 +158,13 @@ class TrainRunner(DeployRunner):
                     self.metric.reset()
                 if (self.iter + 1) % self.snapshot_interval == 0:
                     self.save_model(out_dir=self.workdir, filename=f'iter{self.iter + 1}.pth')
-                if self.iter > self.max_iterations:
+                if self.iter >= self.max_iterations:
                     flag = False
                     break
             if not iter_based:
                 self.lr_scheduler.step()
+        self.logger.info('Ending of training, save the model of the last iterations.')
+        self.save_model(out_dir=self.workdir, filename='final.pth')
 
     @property
     def epoch(self):
@@ -194,10 +193,12 @@ class TrainRunner(DeployRunner):
                    filename,
                    save_optimizer=True,
                    meta=None):
+        current_meta = dict(epoch=self.epoch, iter=self.iter, lr=self.lr,
+                            best_acc=self.best_acc, best_norm=self.best_norm)
         if meta is None:
-            meta = dict(epoch=self.epoch, iter=self.iter, lr=self.lr)
+            meta = current_meta
         else:
-            meta.update(epoch=self.epoch, iter=self.iter, lr=self.lr)
+            meta.update(current_meta)
 
         filepath = osp.join(out_dir, filename)
         optimizer = self.optimizer if save_optimizer else None
@@ -208,10 +209,11 @@ class TrainRunner(DeployRunner):
                         meta=meta)
 
     def resume(self, checkpoint, resume_optimizer=False,
-               resume_lr_scheduler=False, resume_meta=False,
+               resume_lr_scheduler=False, resume_meta=False, strict=True,
                map_location='default'):
         checkpoint = self.load_checkpoint(checkpoint,
-                                          map_location=map_location)
+                                          map_location=map_location,
+                                          strict=strict)
 
         if resume_optimizer and 'optimizer' in checkpoint:
             self.logger.info('Resume optimizer')
@@ -222,6 +224,7 @@ class TrainRunner(DeployRunner):
         if resume_meta and 'meta' in checkpoint:
             self.logger.info('Resume meta data')
             meta = checkpoint['meta']
-            self.best = meta.get('best', -1)
+            self.best_acc = meta.get('best_acc', -1)
+            self.best_norm = meta.get('best_norm', -1)
             self.iter = meta.get('iter', 0)
             self.epoch = meta.get('epoch', 0)

@@ -21,5 +21,4 @@ class CTCLoss(nn.Module):
                               targets=target.to(pred.device),
                               input_lengths=input_lengths.to(pred.device),
                               target_lengths=target_length.to(pred.device))
-
         return cost

@@ -4,10 +4,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
 
-from PIL import Image
+import cv2
 from volksdep.converters import torch2onnx, torch2trt, save
 
-from vedastr.runners import DeployRunner
+from vedastr.runners import InferenceRunner
 from vedastr.utils import Config
 from tools.deploy.utils import CALIBRATORS, CalibDataset
 
@@ -47,13 +47,14 @@ def main():
     deploy_cfg = cfg['deploy']
     common_cfg = cfg.get('common')
 
-    runner = DeployRunner(deploy_cfg, common_cfg)
+    runner = InferenceRunner(deploy_cfg, common_cfg)
     assert runner.use_gpu, 'Please use valid gpu to export model.'
     runner.load_checkpoint(args.checkpoint)
 
-    image = Image.open(args.image)
+    image = cv2.imread(args.image)
 
-    image, label = runner.transform(image=image, label='')
+    aug = runner.transform(image=image, label='')
+    image, label = aug['image'], aug['label']
     image = image.unsqueeze(0).cuda()
     dummy_input = (image, runner.converter.test_encode(['']))
     model = runner.model.cuda().eval()

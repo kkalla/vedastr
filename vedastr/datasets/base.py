@@ -4,22 +4,21 @@ import logging
 import os
 import re
 
-from PIL import Image
+import cv2
 from torch.utils.data import Dataset
 
 
 class BaseDataset(Dataset):
     def __init__(self, root, gt_txt=None, transform=None, character='abcdefghijklmnopqrstuvwxyz0123456789',
-                 batch_max_length=25, data_filter_off=False, unknown=False):
+                 batch_max_length=100000, data_filter=True):
         assert type(root) == str
         if gt_txt is not None:
             assert os.path.isfile(gt_txt)
             self.gt_txt = gt_txt
-        self.root = root
+        self.root = os.path.abspath(root)
         self.character = character
         self.batch_max_length = batch_max_length
-        self.data_filter_off = data_filter_off
-        self.unknown = unknown
+        self.data_filter = data_filter
 
         if transform:
             self.transforms = transform
@@ -35,25 +34,26 @@ class BaseDataset(Dataset):
         raise NotImplementedError
 
     def filter(self, label):
-        if self.data_filter_off:
+        if not self.data_filter:
             return False
-        else:
-            if len(label) > self.batch_max_length:
-                return True
-            out_of_char = f'[^{self.character}]'
-            if re.search(out_of_char, label.lower()) and not self.unknown:
-                return True
-            return False
+        """We will filter those samples whose length is larger than defined max_length by default."""
+        out_of_char = f'[^{self.character}]'
+        label = re.sub(out_of_char, '', label.lower())  # replace those character not in self.character with ''
+        if len(label) > self.batch_max_length:  # filter whose label larger than batch_max_length
+            return True
+
+        return False
 
     def __getitem__(self, index):
-        img = Image.open(self.img_names[index])
+        # default img channel is rgb
+        img = cv2.imread(self.img_names[index])
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         label = self.gt_texts[index]
 
         if self.transforms:
-            img, label = self.transforms(img, label)
-        if not self.unknown:
-            out_of_char = f'[^{self.character}]'
-            label = re.sub(out_of_char, '', label)
+            aug = self.transforms(image=img, label=label)
+            img, label = aug['image'], aug['label']
+
         return img, label
 
     def __len__(self):
